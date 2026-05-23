@@ -4,31 +4,27 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="white">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>dachshund run</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body {
-    width: 100%; height: 100%;
+  html { height: 100%; height: -webkit-fill-available; }
+  body {
+    width: 100%; height: 100%; height: -webkit-fill-available;
     background: #fdfbf7;
     overflow: hidden;
-    -webkit-tap-highlight-color: transparent;
-    -webkit-touch-callout: none;
-    user-select: none;
-  }
-  body {
     display: flex;
     align-items: center;
     justify-content: center;
-    /* iPhone Safe Area */
-    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    user-select: none;
+    padding: env(safe-area-inset-top,0px) env(safe-area-inset-right,0px)
+             env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px);
   }
   #c {
     display: block;
     touch-action: none;
-    border-radius: 0;
-    max-width: 100%;
-    max-height: 100%;
   }
 </style>
 </head>
@@ -36,433 +32,334 @@
 <canvas id="c"></canvas>
 <script>
 const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
+const ctx    = canvas.getContext('2d');
 
-// ゲームの論理サイズ（アスペクト比 16:9 に近い）
-const BASE_W = 480, BASE_H = 280;
+// ── レイアウト定数 ──────────────────────────────────────────
+// 横長（PC）: 480×280  縦長（スマホ）: 280×480
+const LAYOUT = {
+  landscape: { BW: 480, BH: 280, GROUND: 200, DOG_X: 90,  DOG_SCALE: 1.0 },
+  portrait:  { BW: 280, BH: 480, GROUND: 360, DOG_X: 60,  DOG_SCALE: 1.4 }
+};
+
+let L    = LAYOUT.landscape;   // 現在のレイアウト
 let scale = 1;
+let isMobile = false;
 
-function resize() {
+function getLayout() {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
+  // 600px未満 or 縦長 → スマホ縦レイアウト
+  return (vw < 600 || vh > vw) ? 'portrait' : 'landscape';
+}
 
-  // 画面全体に収まる最大スケールを計算
-  const scaleX = vw / BASE_W;
-  const scaleY = vh / BASE_H;
+function resize() {
+  const vw   = window.innerWidth;
+  const vh   = window.innerHeight;
+  const mode = getLayout();
+  const prev = L;
+  L = LAYOUT[mode];
+
+  const scaleX = vw / L.BW;
+  const scaleY = vh / L.BH;
   scale = Math.min(scaleX, scaleY);
 
-  // 縦画面のスマホでは横幅を優先して拡大
-  // （高さが余る場合は上下中央配置はCSSが担当）
-  canvas.width  = Math.floor(BASE_W * scale);
-  canvas.height = Math.floor(BASE_H * scale);
+  canvas.width  = Math.floor(L.BW * scale);
+  canvas.height = Math.floor(L.BH * scale);
   canvas.style.width  = canvas.width  + 'px';
   canvas.style.height = canvas.height + 'px';
+
+  // レイアウト変更時はアイテム・犬位置をリセット
+  if (prev !== L && gameState !== 'idle') {
+    resetPositions();
+  }
 }
+
+function resetPositions() {
+  dog.y = L.GROUND; dog.vy = 0; dog.onGround = true;
+  items = []; particles = [];
+  clouds   = [{x: L.BW*0.8, y:40, s:1}, {x: L.BW*0.4, y:25, s:0.7}, {x: L.BW*0.15, y:55, s:0.85}];
+  bgTrees  = [L.BW*0.85, L.BW*0.6, L.BW*0.35, L.BW*0.1].map(x => ({x, y: L.GROUND}));
+}
+
 resize();
 window.addEventListener('resize', resize);
-// iOS向け：回転時も確実にリサイズ
-window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+window.addEventListener('orientationchange', () => setTimeout(resize, 250));
 
-const GROUND = 200;
-const DOG_X = 90;
+// ── ゲーム状態 ─────────────────────────────────────────────
 let gameState = 'idle';
-let score = 0;
-let hiScore = 0;
-let frame = 0;
-let animFrame = 0;
+let score = 0, hiScore = 0, frame = 0, animFrame = 0;
+let dog = { y: L.GROUND, vy: 0, onGround: true, legPhase: 0 };
+let items = [], particles = [];
+let clouds  = [{x:380,y:40,s:1},{x:200,y:25,s:0.7},{x:80,y:55,s:0.85}];
+let bgTrees = [{x:420,y:L.GROUND},{x:300,y:L.GROUND},{x:180,y:L.GROUND},{x:60,y:L.GROUND}];
 
-let dog = { y: GROUND, vy: 0, onGround: true, legPhase: 0 };
-let items = [];
-let particles = [];
-let clouds   = [{x:380,y:40,s:1},{x:200,y:25,s:0.7},{x:80,y:55,s:0.85}];
-let bgTrees  = [{x:420,y:GROUND},{x:300,y:GROUND},{x:180,y:GROUND},{x:60,y:GROUND}];
-
-const GRAVITY    = 0.55;
-const JUMP_V     = -11;
+const GRAVITY = 0.55;
+const JUMP_V  = -12;
 const SPEED_BASE = 2.5;
 
 function getSpeed() { return SPEED_BASE + score * 0.012; }
 
 function spawnItem() {
-  const minGap = 160 + Math.random() * 120;
+  const minGap = 140 + Math.random() * 100;
   const lastX  = items.length ? items[items.length - 1].x : 0;
-  if (lastX > BASE_W - minGap) return;
+  if (lastX > L.BW - minGap) return;
   if (Math.random() < 0.55) {
-    items.push({ type: 'flower', x: BASE_W + 20, y: GROUND - 8, collected: false });
+    items.push({ type:'flower', x: L.BW+20, y: L.GROUND-8, collected:false });
   } else {
-    items.push({ type: 'puddle', x: BASE_W + 20, y: GROUND + 8 });
+    items.push({ type:'puddle', x: L.BW+20, y: L.GROUND+8 });
   }
 }
 
 function spawnParticles(x, y, color) {
   for (let i = 0; i < 8; i++) {
-    particles.push({ x, y, vx: (Math.random() - 0.5) * 4, vy: -(Math.random() * 4 + 1), life: 1, color });
+    particles.push({ x, y, vx:(Math.random()-0.5)*4, vy:-(Math.random()*4+1), life:1, color });
   }
 }
 
-// ── draw functions ──────────────────────────────────────────
-
+// ── 描画 ───────────────────────────────────────────────────
+// dogScale = キャラクター拡大率（スマホで大きく）
 function drawDog(x, y, phase, jumping) {
+  const ds = L.DOG_SCALE;
   ctx.save();
   ctx.translate(x * scale, y * scale);
+  ctx.scale(ds, ds);
+
   ctx.strokeStyle = '#1a1a1a';
   ctx.fillStyle   = '#f5e6c8';
   ctx.lineWidth   = 2.5 * scale;
-  ctx.lineCap     = 'round';
-  ctx.lineJoin    = 'round';
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
 
   const lp  = jumping ? 0 : Math.sin(phase) * 4;
   const lp2 = jumping ? 0 : Math.sin(phase + Math.PI) * 4;
 
   // body
   ctx.beginPath();
-  ctx.ellipse(0, -10, 22, 10, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, -10, 22, 10, 0, 0, Math.PI*2);
   ctx.fill(); ctx.stroke();
-
   // head
   ctx.beginPath();
-  ctx.ellipse(22, -18, 11, 9, 0.2, 0, Math.PI * 2);
+  ctx.ellipse(22, -18, 11, 9, 0.2, 0, Math.PI*2);
   ctx.fill(); ctx.stroke();
-
   // snout
   ctx.beginPath();
-  ctx.ellipse(31, -16, 7, 5, 0.1, 0, Math.PI * 2);
-  ctx.fillStyle = '#e8d4a0';
-  ctx.fill(); ctx.stroke();
-
+  ctx.ellipse(31, -16, 7, 5, 0.1, 0, Math.PI*2);
+  ctx.fillStyle = '#e8d4a0'; ctx.fill(); ctx.stroke();
   // nose
   ctx.fillStyle = '#1a1a1a';
-  ctx.beginPath();
-  ctx.ellipse(36, -17, 2.5, 2, 0, 0, Math.PI * 2);
-  ctx.fill();
-
+  ctx.beginPath(); ctx.ellipse(36,-17,2.5,2,0,0,Math.PI*2); ctx.fill();
   // eye
-  ctx.fillStyle = '#1a1a1a';
-  ctx.beginPath();
-  ctx.arc(26, -21, 2, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.beginPath(); ctx.arc(26,-21,2,0,Math.PI*2); ctx.fill();
   ctx.fillStyle = 'white';
-  ctx.beginPath();
-  ctx.arc(27, -22, 0.7, 0, Math.PI * 2);
-  ctx.fill();
-
+  ctx.beginPath(); ctx.arc(27,-22,0.7,0,Math.PI*2); ctx.fill();
   // ear
-  ctx.fillStyle   = '#c8a46e';
-  ctx.strokeStyle = '#1a1a1a';
-  ctx.beginPath();
-  ctx.ellipse(20, -13, 5, 9, 0.7, 0, Math.PI * 2);
-  ctx.fill(); ctx.stroke();
-
+  ctx.fillStyle='#c8a46e'; ctx.strokeStyle='#1a1a1a';
+  ctx.beginPath(); ctx.ellipse(20,-13,5,9,0.7,0,Math.PI*2); ctx.fill(); ctx.stroke();
   // tail
-  ctx.strokeStyle = '#1a1a1a';
-  ctx.lineWidth   = 2.5 * scale;
-  ctx.beginPath();
-  ctx.moveTo(-20, -14);
-  const tailWag = Math.sin(phase * 3) * 6;
-  ctx.quadraticCurveTo(-28, -22 + tailWag, -26, -30 + tailWag);
-  ctx.stroke();
-
+  ctx.strokeStyle='#1a1a1a'; ctx.lineWidth=2.5*scale;
+  const tw = Math.sin(phase*3)*6;
+  ctx.beginPath(); ctx.moveTo(-20,-14);
+  ctx.quadraticCurveTo(-28,-22+tw,-26,-30+tw); ctx.stroke();
   // legs
-  ctx.lineWidth   = 3 * scale;
-  ctx.strokeStyle = '#1a1a1a';
-  function leg(lx, ly, offset) {
-    ctx.beginPath();
-    ctx.moveTo(lx, ly);
-    ctx.lineTo(lx, ly + 12 + offset);
-    ctx.lineTo(lx + 5, ly + 12 + offset);
-    ctx.stroke();
+  ctx.lineWidth = 3*scale; ctx.strokeStyle='#1a1a1a';
+  function leg(lx,ly,off){
+    ctx.beginPath(); ctx.moveTo(lx,ly);
+    ctx.lineTo(lx,ly+12+off); ctx.lineTo(lx+5,ly+12+off); ctx.stroke();
   }
-  leg(-8, -2, lp); leg(2, -2, lp2);
-  leg(10, -2, lp); leg(18, -2, lp2);
+  leg(-8,-2,lp); leg(2,-2,lp2); leg(10,-2,lp); leg(18,-2,lp2);
 
   ctx.restore();
 }
 
 function drawFlower(x, y, anim) {
   ctx.save();
-  ctx.translate(x * scale, y * scale);
-  const bob = Math.sin(anim * 0.08) * 2;
-  ctx.translate(0, bob * scale);
-  ctx.lineCap = 'round';
-
-  // stem
-  ctx.strokeStyle = '#5a9e50';
-  ctx.lineWidth   = 1.8 * scale;
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.quadraticCurveTo(3 * scale, -10 * scale, 0, -18 * scale);
-  ctx.stroke();
-
-  // petals
-  const pColors = ['#ff9eb5','#ffcc88','#b5d9ff','#c8b5ff'];
-  for (let i = 0; i < 5; i++) {
-    const a = (i / 5) * Math.PI * 2;
-    ctx.fillStyle   = pColors[i % pColors.length];
-    ctx.strokeStyle = '#1a1a1a';
-    ctx.lineWidth   = 1.2 * scale;
+  ctx.translate(x*scale, y*scale);
+  ctx.translate(0, Math.sin(anim*0.08)*2*scale);
+  ctx.lineCap='round';
+  ctx.strokeStyle='#5a9e50'; ctx.lineWidth=1.8*scale;
+  ctx.beginPath(); ctx.moveTo(0,0);
+  ctx.quadraticCurveTo(3*scale,-10*scale,0,-18*scale); ctx.stroke();
+  const pColors=['#ff9eb5','#ffcc88','#b5d9ff','#c8b5ff'];
+  for(let i=0;i<5;i++){
+    const a=(i/5)*Math.PI*2;
+    ctx.fillStyle=pColors[i%4]; ctx.strokeStyle='#1a1a1a'; ctx.lineWidth=1.2*scale;
     ctx.beginPath();
-    ctx.ellipse(Math.cos(a) * 5 * scale, -18 * scale + Math.sin(a) * 5 * scale, 4 * scale, 3 * scale, a, 0, Math.PI * 2);
+    ctx.ellipse(Math.cos(a)*5*scale,-18*scale+Math.sin(a)*5*scale,4*scale,3*scale,a,0,Math.PI*2);
     ctx.fill(); ctx.stroke();
   }
-
-  // center
-  ctx.fillStyle   = '#ffe566';
-  ctx.strokeStyle = '#1a1a1a';
-  ctx.lineWidth   = 1.5 * scale;
-  ctx.beginPath();
-  ctx.arc(0, -18 * scale, 4 * scale, 0, Math.PI * 2);
-  ctx.fill(); ctx.stroke();
-
+  ctx.fillStyle='#ffe566'; ctx.strokeStyle='#1a1a1a'; ctx.lineWidth=1.5*scale;
+  ctx.beginPath(); ctx.arc(0,-18*scale,4*scale,0,Math.PI*2); ctx.fill(); ctx.stroke();
   ctx.restore();
 }
 
 function drawPuddle(x, y) {
-  ctx.save();
-  ctx.translate(x * scale, y * scale);
-  ctx.strokeStyle = '#1a1a1a';
-  ctx.lineWidth   = 1.8 * scale;
-  ctx.fillStyle   = 'rgba(120,180,240,0.6)';
-  ctx.beginPath();
-  ctx.ellipse(0, 0, 22 * scale, 8 * scale, 0, 0, Math.PI * 2);
-  ctx.fill(); ctx.stroke();
-  ctx.fillStyle = 'rgba(180,220,255,0.7)';
-  ctx.beginPath();
-  ctx.ellipse(-6 * scale, -2 * scale, 7 * scale, 3 * scale, -0.3, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.save(); ctx.translate(x*scale,y*scale);
+  ctx.strokeStyle='#1a1a1a'; ctx.lineWidth=1.8*scale;
+  ctx.fillStyle='rgba(120,180,240,0.6)';
+  ctx.beginPath(); ctx.ellipse(0,0,22*scale,8*scale,0,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='rgba(180,220,255,0.7)';
+  ctx.beginPath(); ctx.ellipse(-6*scale,-2*scale,7*scale,3*scale,-0.3,0,Math.PI*2); ctx.fill();
   ctx.restore();
 }
 
 function drawCloud(x, y, s) {
-  ctx.save();
-  ctx.translate(x * scale, y * scale);
-  ctx.fillStyle   = 'rgba(255,255,255,0.85)';
-  ctx.strokeStyle = '#d0ccc5';
-  ctx.lineWidth   = 1.2 * scale;
-  for (const [cx2, cy2, r] of [[-18,0,16],[-4,-10,18],[12,-6,14],[26,2,12]]) {
-    ctx.beginPath();
-    ctx.arc(cx2 * s * scale, cy2 * s * scale, r * s * scale, 0, Math.PI * 2);
+  ctx.save(); ctx.translate(x*scale,y*scale);
+  ctx.fillStyle='rgba(255,255,255,0.85)'; ctx.strokeStyle='#d0ccc5'; ctx.lineWidth=1.2*scale;
+  for(const[cx2,cy2,r] of [[-18,0,16],[-4,-10,18],[12,-6,14],[26,2,12]]){
+    ctx.beginPath(); ctx.arc(cx2*s*scale,cy2*s*scale,r*s*scale,0,Math.PI*2);
     ctx.fill(); ctx.stroke();
   }
   ctx.restore();
 }
 
 function drawTree(x, y) {
-  ctx.save();
-  ctx.translate(x * scale, y * scale);
-  ctx.strokeStyle = '#b8a890';
-  ctx.lineWidth   = 2 * scale;
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.lineTo(0, -30 * scale);
-  ctx.stroke();
-  ctx.fillStyle   = 'rgba(180,210,160,0.5)';
-  ctx.strokeStyle = '#9ab890';
-  ctx.lineWidth   = 1.5 * scale;
-  ctx.beginPath();
-  ctx.arc(0, -36 * scale, 14 * scale, 0, Math.PI * 2);
-  ctx.fill(); ctx.stroke();
+  ctx.save(); ctx.translate(x*scale,y*scale);
+  ctx.strokeStyle='#b8a890'; ctx.lineWidth=2*scale;
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-30*scale); ctx.stroke();
+  ctx.fillStyle='rgba(180,210,160,0.5)'; ctx.strokeStyle='#9ab890'; ctx.lineWidth=1.5*scale;
+  ctx.beginPath(); ctx.arc(0,-36*scale,14*scale,0,Math.PI*2); ctx.fill(); ctx.stroke();
   ctx.restore();
 }
 
 function drawGround() {
-  ctx.strokeStyle = '#1a1a1a';
-  ctx.lineWidth   = 2.5 * scale;
-  ctx.beginPath();
-  ctx.moveTo(0, GROUND * scale);
-  ctx.lineTo(BASE_W * scale, GROUND * scale);
-  ctx.stroke();
-
-  ctx.strokeStyle = '#d8d0c4';
-  ctx.lineWidth   = 1 * scale;
-  for (let i = 0; i < 12; i++) {
-    const gx = ((frame * getSpeed() * 0.5) + i * 45) % BASE_W;
-    ctx.beginPath();
-    ctx.moveTo(gx * scale, GROUND * scale);
-    ctx.lineTo((gx + 20) * scale, GROUND * scale);
-    ctx.stroke();
+  ctx.strokeStyle='#1a1a1a'; ctx.lineWidth=2.5*scale;
+  ctx.beginPath(); ctx.moveTo(0,L.GROUND*scale); ctx.lineTo(L.BW*scale,L.GROUND*scale); ctx.stroke();
+  ctx.strokeStyle='#d8d0c4'; ctx.lineWidth=1*scale;
+  for(let i=0;i<12;i++){
+    const gx=((frame*getSpeed()*0.5)+i*45)%L.BW;
+    ctx.beginPath(); ctx.moveTo(gx*scale,L.GROUND*scale); ctx.lineTo((gx+20)*scale,L.GROUND*scale); ctx.stroke();
   }
-}
-
-function checkCollision(item) {
-  const dx = item.x - DOG_X;
-  const dy = item.y - 8 - dog.y;
-  if (item.type === 'flower') return Math.abs(dx) < 20 && Math.abs(dy) < 20;
-  if (item.type === 'puddle') return Math.abs(dx) < 18 && dog.y >= GROUND - 4;
-  return false;
-}
-
-function jump() {
-  if (gameState === 'idle' || gameState === 'gameover') { start(); return; }
-  if (dog.onGround && gameState === 'playing') {
-    dog.vy = JUMP_V;
-    dog.onGround = false;
-  }
-}
-
-function start() {
-  gameState  = 'playing';
-  score      = 0;
-  dog        = { y: GROUND, vy: 0, onGround: true, legPhase: 0 };
-  items      = [];
-  frame      = 0;
-  animFrame  = 0;
-  particles  = [];
 }
 
 function drawScore() {
-  ctx.font      = `${14 * scale}px Georgia, serif`;
-  ctx.fillStyle = '#888';
-  ctx.textAlign = 'left';
-  ctx.fillText('score', 18 * scale, 24 * scale);
-  ctx.font      = `bold ${22 * scale}px Georgia, serif`;
-  ctx.fillStyle = '#333';
-  ctx.fillText(score, 18 * scale, 46 * scale);
-
-  if (hiScore > 0) {
-    ctx.font      = `${12 * scale}px Georgia, serif`;
-    ctx.fillStyle = '#bbb';
-    ctx.textAlign = 'right';
-    ctx.fillText('best  ' + hiScore, (BASE_W - 18) * scale, 24 * scale);
+  const fs = getLayout()==='portrait' ? 16 : 14;
+  const fb = getLayout()==='portrait' ? 26 : 22;
+  ctx.font=`${fs*scale}px Georgia,serif`; ctx.fillStyle='#888'; ctx.textAlign='left';
+  ctx.fillText('score',18*scale,28*scale);
+  ctx.font=`bold ${fb*scale}px Georgia,serif`; ctx.fillStyle='#333';
+  ctx.fillText(score,18*scale,52*scale);
+  if(hiScore>0){
+    ctx.font=`${(fs-2)*scale}px Georgia,serif`; ctx.fillStyle='#bbb'; ctx.textAlign='right';
+    ctx.fillText('best  '+hiScore,(L.BW-18)*scale,28*scale);
   }
 }
 
 function drawIdleScreen() {
-  ctx.font      = `bold ${20 * scale}px Georgia, serif`;
-  ctx.fillStyle = '#555';
-  ctx.textAlign = 'center';
-  ctx.fillText('tap or press space to start', BASE_W / 2 * scale, 90 * scale);
-  ctx.font      = `${13 * scale}px Georgia, serif`;
-  ctx.fillStyle = '#aaa';
-  ctx.fillText('collect flowers  ·  avoid puddles', BASE_W / 2 * scale, 112 * scale);
+  const cy = getLayout()==='portrait' ? L.BH*0.22 : L.BH*0.32;
+  ctx.font=`bold ${18*scale}px Georgia,serif`; ctx.fillStyle='#555'; ctx.textAlign='center';
+  ctx.fillText('tap to start', L.BW/2*scale, cy*scale);
+  ctx.font=`${12*scale}px Georgia,serif`; ctx.fillStyle='#bbb';
+  ctx.fillText('flowers ✿  avoid puddles', L.BW/2*scale, (cy+22)*scale);
 }
 
-function roundRect(ctx, x, y, w, h, r) {
+function roundRect(x,y,w,h,r){
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y);
+  ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r);
+  ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h);
+  ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r);
+  ctx.quadraticCurveTo(x,y,x+r,y);
   ctx.closePath();
 }
 
 function drawGameOver() {
-  ctx.fillStyle = 'rgba(255,255,255,0.82)';
-  const bw = 200 * scale, bh = 72 * scale;
-  const bx = (BASE_W / 2 - 100) * scale, by = 70 * scale;
-  roundRect(ctx, bx, by, bw, bh, 12 * scale);
-  ctx.fill();
-  ctx.strokeStyle = '#ddd';
-  ctx.lineWidth   = 1.5 * scale;
-  roundRect(ctx, bx, by, bw, bh, 12 * scale);
-  ctx.stroke();
-  ctx.font      = `bold ${16 * scale}px Georgia, serif`;
-  ctx.fillStyle = '#444';
-  ctx.textAlign = 'center';
-  ctx.fillText('splashed!  score ' + score, BASE_W / 2 * scale, 100 * scale);
-  ctx.font      = `${12 * scale}px Georgia, serif`;
-  ctx.fillStyle = '#aaa';
-  ctx.fillText('tap to try again', BASE_W / 2 * scale, 124 * scale);
+  const cx2=L.BW/2, cy2=getLayout()==='portrait'?L.BH*0.2:L.BH*0.27;
+  const bw=220,bh=76;
+  ctx.fillStyle='rgba(255,255,255,0.88)';
+  roundRect((cx2-bw/2)*scale,cy2*scale,bw*scale,bh*scale,12*scale); ctx.fill();
+  ctx.strokeStyle='#ddd'; ctx.lineWidth=1.5*scale;
+  roundRect((cx2-bw/2)*scale,cy2*scale,bw*scale,bh*scale,12*scale); ctx.stroke();
+  ctx.font=`bold ${16*scale}px Georgia,serif`; ctx.fillStyle='#444'; ctx.textAlign='center';
+  ctx.fillText('splashed!  score '+score, cx2*scale,(cy2+30)*scale);
+  ctx.font=`${12*scale}px Georgia,serif`; ctx.fillStyle='#aaa';
+  ctx.fillText('tap to try again', cx2*scale,(cy2+54)*scale);
 }
 
-// ── main loop ───────────────────────────────────────────────
-function loop() {
+function checkCollision(it){
+  const dx=it.x-L.DOG_X;
+  const dogW = 22*L.DOG_SCALE, dogH = 20*L.DOG_SCALE;
+  const dy=it.y-8-dog.y;
+  if(it.type==='flower') return Math.abs(dx)<dogW && Math.abs(dy)<dogH;
+  if(it.type==='puddle') return Math.abs(dx)<20 && dog.y>=L.GROUND-4;
+  return false;
+}
+
+function jump(){
+  if(gameState==='idle'||gameState==='gameover'){ start(); return; }
+  if(dog.onGround && gameState==='playing'){ dog.vy=JUMP_V; dog.onGround=false; }
+}
+
+function start(){
+  gameState='playing'; score=0; frame=0; animFrame=0;
+  dog={y:L.GROUND,vy:0,onGround:true,legPhase:0};
+  items=[]; particles=[];
+}
+
+// ── main loop ──────────────────────────────────────────────
+function loop(){
   requestAnimationFrame(loop);
   animFrame++;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#fdfbf7';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#fdfbf7'; ctx.fillRect(0,0,canvas.width,canvas.height);
 
-  // clouds
-  for (const cl of clouds) {
-    cl.x -= gameState === 'playing' ? 0.3 : 0.15;
-    if (cl.x < -80) cl.x = BASE_W + 80;
-    drawCloud(cl.x, cl.y, cl.s);
+  for(const cl of clouds){
+    cl.x -= gameState==='playing'?0.3:0.15;
+    if(cl.x<-80) cl.x=L.BW+80;
+    drawCloud(cl.x,cl.y,cl.s);
   }
-
-  // bg trees
-  for (const t of bgTrees) {
-    t.x -= gameState === 'playing' ? getSpeed() * 0.4 : 0;
-    if (t.x < -30) t.x = BASE_W + 30;
-    drawTree(t.x, t.y);
+  for(const t of bgTrees){
+    t.x -= gameState==='playing'?getSpeed()*0.4:0;
+    if(t.x<-30) t.x=L.BW+30;
+    drawTree(t.x,t.y);
   }
-
   drawGround();
 
-  if (gameState === 'playing') {
+  if(gameState==='playing'){
     frame++;
-    dog.vy += GRAVITY;
-    dog.y  += dog.vy;
-    if (dog.y >= GROUND) { dog.y = GROUND; dog.vy = 0; dog.onGround = true; }
-    dog.legPhase += dog.onGround ? 0.22 : 0;
-
-    if (frame % 90 === 0) spawnItem();
-
-    for (let i = items.length - 1; i >= 0; i--) {
-      const it = items[i];
-      it.x -= getSpeed();
-
-      if (it.type === 'flower' && !it.collected) {
-        drawFlower(it.x, it.y, animFrame);
-        if (checkCollision(it)) {
-          it.collected = true;
-          score++;
-          spawnParticles(DOG_X * scale, dog.y * scale, '#ffcc88');
-          items.splice(i, 1);
-        }
-      } else if (it.type === 'puddle') {
-        drawPuddle(it.x, it.y);
-        if (checkCollision(it)) {
-          spawnParticles(DOG_X * scale, dog.y * scale, '#78b4f0');
-          if (score > hiScore) hiScore = score;
-          gameState = 'gameover';
-        }
+    dog.vy+=GRAVITY; dog.y+=dog.vy;
+    if(dog.y>=L.GROUND){dog.y=L.GROUND;dog.vy=0;dog.onGround=true;}
+    dog.legPhase+=dog.onGround?0.22:0;
+    if(frame%90===0) spawnItem();
+    for(let i=items.length-1;i>=0;i--){
+      const it=items[i]; it.x-=getSpeed();
+      if(it.type==='flower'&&!it.collected){
+        drawFlower(it.x,it.y,animFrame);
+        if(checkCollision(it)){it.collected=true;score++;spawnParticles(L.DOG_X*scale,dog.y*scale,'#ffcc88');items.splice(i,1);}
+      } else if(it.type==='puddle'){
+        drawPuddle(it.x,it.y);
+        if(checkCollision(it)){spawnParticles(L.DOG_X*scale,dog.y*scale,'#78b4f0');if(score>hiScore)hiScore=score;gameState='gameover';}
       }
-      if (it.x < -60) items.splice(i, 1);
+      if(it.x<-60) items.splice(i,1);
     }
-
-    drawDog(DOG_X, dog.y, dog.legPhase, !dog.onGround);
+    drawDog(L.DOG_X,dog.y,dog.legPhase,!dog.onGround);
     drawScore();
-
-  } else if (gameState === 'idle') {
-    const idleBob = Math.sin(animFrame * 0.04) * 2;
-    drawDog(DOG_X, GROUND + idleBob, animFrame * 0.15, false);
+  } else if(gameState==='idle'){
+    const bob=Math.sin(animFrame*0.04)*2;
+    drawDog(L.DOG_X,L.GROUND+bob,animFrame*0.15,false);
     drawIdleScreen();
-    for (let i = 0; i < 3; i++) drawFlower(100 + i * 80, GROUND - 8, animFrame + i * 30);
-
-  } else if (gameState === 'gameover') {
-    drawPuddle(DOG_X + 10, GROUND + 8);
-    drawDog(DOG_X, GROUND, 0, false);
-    drawScore();
-    drawGameOver();
+    const gap = getLayout()==='portrait' ? 60 : 80;
+    for(let i=0;i<3;i++) drawFlower(L.DOG_X+50+i*gap,L.GROUND-8,animFrame+i*30);
+  } else {
+    drawPuddle(L.DOG_X+10,L.GROUND+8);
+    drawDog(L.DOG_X,L.GROUND,0,false);
+    drawScore(); drawGameOver();
   }
 
-  // particles
-  for (let i = particles.length - 1; i >= 0; i--) {
-    const p = particles[i];
-    p.x += p.vx * scale;
-    p.y += p.vy * scale;
-    p.vy += 0.15 * scale;
-    p.life -= 0.04;
-    if (p.life <= 0) { particles.splice(i, 1); continue; }
-    ctx.save();
-    ctx.globalAlpha = p.life;
-    ctx.fillStyle   = p.color;
-    ctx.strokeStyle = '#1a1a1a';
-    ctx.lineWidth   = 1 * scale;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 3 * scale, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i];
+    p.x+=p.vx*scale; p.y+=p.vy*scale; p.vy+=0.15*scale; p.life-=0.04;
+    if(p.life<=0){particles.splice(i,1);continue;}
+    ctx.save(); ctx.globalAlpha=p.life;
+    ctx.fillStyle=p.color; ctx.strokeStyle='#1a1a1a'; ctx.lineWidth=1*scale;
+    ctx.beginPath(); ctx.arc(p.x,p.y,3*scale,0,Math.PI*2); ctx.fill(); ctx.stroke();
     ctx.restore();
   }
 }
 
-canvas.addEventListener('pointerdown', e => { e.preventDefault(); jump(); });
-document.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); jump(); } });
+canvas.addEventListener('pointerdown',e=>{e.preventDefault();jump();});
+document.addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();jump();}});
 
 loop();
 </script>

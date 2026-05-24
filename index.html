@@ -1,67 +1,22 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="white">
-<title>dachshund run</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body {
-    width: 100%; height: 100%;
-    background: #fdfbf7;
-    overflow: hidden;
-    -webkit-tap-highlight-color: transparent;
-    -webkit-touch-callout: none;
-    user-select: none;
-  }
-  body {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    /* iPhone Safe Area */
-    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-  }
-  #c {
-    display: block;
-    touch-action: none;
-    border-radius: 0;
-    max-width: 100%;
-    max-height: 100%;
-  }
-</style>
-</head>
-<body>
-<canvas id="c"></canvas>
+
+<canvas id="c" style="display:block;touch-action:none;cursor:pointer;border-radius:16px;"></canvas>
+<div id="ui" style="font-family:'Georgia',serif;"></div>
 <script>
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
-
-// ゲームの論理サイズ（アスペクト比 16:9 に近い）
+let W, H, scale;
 const BASE_W = 480, BASE_H = 280;
-let scale = 1;
 
 function resize() {
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-
-  // 画面全体に収まる最大スケールを計算
-  const scaleX = vw / BASE_W;
-  const scaleY = vh / BASE_H;
-  scale = Math.min(scaleX, scaleY);
-
-  // 縦画面のスマホでは横幅を優先して拡大
-  // （高さが余る場合は上下中央配置はCSSが担当）
-  canvas.width  = Math.floor(BASE_W * scale);
-  canvas.height = Math.floor(BASE_H * scale);
-  canvas.style.width  = canvas.width  + 'px';
-  canvas.style.height = canvas.height + 'px';
+  const pw = Math.min(680, window.innerWidth);
+  scale = pw / BASE_W;
+  canvas.width = pw;
+  canvas.height = BASE_H * scale;
+  canvas.style.width = pw + 'px';
+  canvas.style.height = (BASE_H * scale) + 'px';
 }
 resize();
-window.addEventListener('resize', resize);
-// iOS向け：回転時も確実にリサイズ
-window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+window.addEventListener('resize', () => { resize(); });
 
 const GROUND = 200;
 const DOG_X = 90;
@@ -74,44 +29,44 @@ let animFrame = 0;
 let dog = { y: GROUND, vy: 0, onGround: true, legPhase: 0 };
 let items = [];
 let particles = [];
-let clouds   = [{x:380,y:40,s:1},{x:200,y:25,s:0.7},{x:80,y:55,s:0.85}];
-let bgTrees  = [{x:420,y:GROUND},{x:300,y:GROUND},{x:180,y:GROUND},{x:60,y:GROUND}];
+let clouds = [{x:380,y:40,s:1},{x:200,y:25,s:0.7},{x:80,y:55,s:0.85}];
+let bgTrees = [{x:420,y:GROUND},{x:300,y:GROUND},{x:180,y:GROUND},{x:60,y:GROUND}];
 
-const GRAVITY    = 0.55;
-const JUMP_V     = -11;
+const GRAVITY = 0.55;
+const JUMP_V = -11;
 const SPEED_BASE = 2.5;
+let speed = SPEED_BASE;
 
 function getSpeed() { return SPEED_BASE + score * 0.012; }
 
 function spawnItem() {
+  const r = Math.random();
   const minGap = 160 + Math.random() * 120;
-  const lastX  = items.length ? items[items.length - 1].x : 0;
+  const lastX = items.length ? items[items.length-1].x : 0;
   if (lastX > BASE_W - minGap) return;
-  if (Math.random() < 0.55) {
-    items.push({ type: 'flower', x: BASE_W + 20, y: GROUND - 8, collected: false });
+  if (r < 0.55) {
+    items.push({type:'flower', x: BASE_W + 20, y: GROUND - 8, collected: false});
   } else {
-    items.push({ type: 'puddle', x: BASE_W + 20, y: GROUND + 8 });
+    items.push({type:'puddle', x: BASE_W + 20, y: GROUND + 8});
   }
 }
 
 function spawnParticles(x, y, color) {
   for (let i = 0; i < 8; i++) {
-    particles.push({ x, y, vx: (Math.random() - 0.5) * 4, vy: -(Math.random() * 4 + 1), life: 1, color });
+    particles.push({x, y, vx: (Math.random()-0.5)*4, vy: -(Math.random()*4+1), life: 1, color});
   }
 }
-
-// ── draw functions ──────────────────────────────────────────
 
 function drawDog(x, y, phase, jumping) {
   ctx.save();
   ctx.translate(x * scale, y * scale);
   ctx.strokeStyle = '#1a1a1a';
-  ctx.fillStyle   = '#f5e6c8';
-  ctx.lineWidth   = 2.5 * scale;
-  ctx.lineCap     = 'round';
-  ctx.lineJoin    = 'round';
+  ctx.fillStyle = '#f5e6c8';
+  ctx.lineWidth = 2.5 * scale;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
 
-  const lp  = jumping ? 0 : Math.sin(phase) * 4;
+  const lp = jumping ? 0 : Math.sin(phase) * 4;
   const lp2 = jumping ? 0 : Math.sin(phase + Math.PI) * 4;
 
   // body
@@ -147,15 +102,15 @@ function drawDog(x, y, phase, jumping) {
   ctx.fill();
 
   // ear
-  ctx.fillStyle   = '#c8a46e';
+  ctx.fillStyle = '#c8a46e';
   ctx.strokeStyle = '#1a1a1a';
   ctx.beginPath();
   ctx.ellipse(20, -13, 5, 9, 0.7, 0, Math.PI * 2);
   ctx.fill(); ctx.stroke();
 
-  // tail
+  // tail (wagging when collecting)
   ctx.strokeStyle = '#1a1a1a';
-  ctx.lineWidth   = 2.5 * scale;
+  ctx.lineWidth = 2.5 * scale;
   ctx.beginPath();
   ctx.moveTo(-20, -14);
   const tailWag = Math.sin(phase * 3) * 6;
@@ -163,8 +118,11 @@ function drawDog(x, y, phase, jumping) {
   ctx.stroke();
 
   // legs
-  ctx.lineWidth   = 3 * scale;
+  ctx.lineWidth = 3 * scale;
+  const legColor = '#c8a46e';
   ctx.strokeStyle = '#1a1a1a';
+  ctx.fillStyle = legColor;
+
   function leg(lx, ly, offset) {
     ctx.beginPath();
     ctx.moveTo(lx, ly);
@@ -172,8 +130,10 @@ function drawDog(x, y, phase, jumping) {
     ctx.lineTo(lx + 5, ly + 12 + offset);
     ctx.stroke();
   }
-  leg(-8, -2, lp); leg(2, -2, lp2);
-  leg(10, -2, lp); leg(18, -2, lp2);
+  leg(-8, -2, lp);
+  leg(2, -2, lp2);
+  leg(10, -2, lp);
+  leg(18, -2, lp2);
 
   ctx.restore();
 }
@@ -183,11 +143,13 @@ function drawFlower(x, y, anim) {
   ctx.translate(x * scale, y * scale);
   const bob = Math.sin(anim * 0.08) * 2;
   ctx.translate(0, bob * scale);
+
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 1.8 * scale;
   ctx.lineCap = 'round';
 
   // stem
   ctx.strokeStyle = '#5a9e50';
-  ctx.lineWidth   = 1.8 * scale;
   ctx.beginPath();
   ctx.moveTo(0, 0);
   ctx.quadraticCurveTo(3 * scale, -10 * scale, 0, -18 * scale);
@@ -197,18 +159,16 @@ function drawFlower(x, y, anim) {
   const pColors = ['#ff9eb5','#ffcc88','#b5d9ff','#c8b5ff'];
   for (let i = 0; i < 5; i++) {
     const a = (i / 5) * Math.PI * 2;
-    ctx.fillStyle   = pColors[i % pColors.length];
+    ctx.fillStyle = pColors[i % pColors.length];
     ctx.strokeStyle = '#1a1a1a';
-    ctx.lineWidth   = 1.2 * scale;
+    ctx.lineWidth = 1.2 * scale;
     ctx.beginPath();
     ctx.ellipse(Math.cos(a) * 5 * scale, -18 * scale + Math.sin(a) * 5 * scale, 4 * scale, 3 * scale, a, 0, Math.PI * 2);
     ctx.fill(); ctx.stroke();
   }
-
-  // center
-  ctx.fillStyle   = '#ffe566';
+  ctx.fillStyle = '#ffe566';
   ctx.strokeStyle = '#1a1a1a';
-  ctx.lineWidth   = 1.5 * scale;
+  ctx.lineWidth = 1.5 * scale;
   ctx.beginPath();
   ctx.arc(0, -18 * scale, 4 * scale, 0, Math.PI * 2);
   ctx.fill(); ctx.stroke();
@@ -220,27 +180,31 @@ function drawPuddle(x, y) {
   ctx.save();
   ctx.translate(x * scale, y * scale);
   ctx.strokeStyle = '#1a1a1a';
-  ctx.lineWidth   = 1.8 * scale;
-  ctx.fillStyle   = 'rgba(120,180,240,0.6)';
+  ctx.lineWidth = 1.8 * scale;
+  ctx.fillStyle = 'rgba(120,180,240,0.6)';
+
   ctx.beginPath();
   ctx.ellipse(0, 0, 22 * scale, 8 * scale, 0, 0, Math.PI * 2);
-  ctx.fill(); ctx.stroke();
+  ctx.fill();
+  ctx.stroke();
+
   ctx.fillStyle = 'rgba(180,220,255,0.7)';
   ctx.beginPath();
   ctx.ellipse(-6 * scale, -2 * scale, 7 * scale, 3 * scale, -0.3, 0, Math.PI * 2);
   ctx.fill();
+
   ctx.restore();
 }
 
 function drawCloud(x, y, s) {
   ctx.save();
   ctx.translate(x * scale, y * scale);
-  ctx.fillStyle   = 'rgba(255,255,255,0.85)';
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.strokeStyle = '#d0ccc5';
-  ctx.lineWidth   = 1.2 * scale;
-  for (const [cx2, cy2, r] of [[-18,0,16],[-4,-10,18],[12,-6,14],[26,2,12]]) {
+  ctx.lineWidth = 1.2 * scale;
+  for (let [cx, cy, r] of [[-18,0,16],[-4,-10,18],[12,-6,14],[26,2,12]]) {
     ctx.beginPath();
-    ctx.arc(cx2 * s * scale, cy2 * s * scale, r * s * scale, 0, Math.PI * 2);
+    ctx.arc(cx * s * scale, cy * s * scale, r * s * scale, 0, Math.PI * 2);
     ctx.fill(); ctx.stroke();
   }
   ctx.restore();
@@ -250,14 +214,14 @@ function drawTree(x, y) {
   ctx.save();
   ctx.translate(x * scale, y * scale);
   ctx.strokeStyle = '#b8a890';
-  ctx.lineWidth   = 2 * scale;
+  ctx.lineWidth = 2 * scale;
   ctx.beginPath();
   ctx.moveTo(0, 0);
   ctx.lineTo(0, -30 * scale);
   ctx.stroke();
-  ctx.fillStyle   = 'rgba(180,210,160,0.5)';
+  ctx.fillStyle = 'rgba(180,210,160,0.5)';
   ctx.strokeStyle = '#9ab890';
-  ctx.lineWidth   = 1.5 * scale;
+  ctx.lineWidth = 1.5 * scale;
   ctx.beginPath();
   ctx.arc(0, -36 * scale, 14 * scale, 0, Math.PI * 2);
   ctx.fill(); ctx.stroke();
@@ -266,14 +230,14 @@ function drawTree(x, y) {
 
 function drawGround() {
   ctx.strokeStyle = '#1a1a1a';
-  ctx.lineWidth   = 2.5 * scale;
+  ctx.lineWidth = 2.5 * scale;
   ctx.beginPath();
   ctx.moveTo(0, GROUND * scale);
   ctx.lineTo(BASE_W * scale, GROUND * scale);
   ctx.stroke();
 
   ctx.strokeStyle = '#d8d0c4';
-  ctx.lineWidth   = 1 * scale;
+  ctx.lineWidth = 1 * scale;
   for (let i = 0; i < 12; i++) {
     const gx = ((frame * getSpeed() * 0.5) + i * 45) % BASE_W;
     ctx.beginPath();
@@ -292,7 +256,10 @@ function checkCollision(item) {
 }
 
 function jump() {
-  if (gameState === 'idle' || gameState === 'gameover') { start(); return; }
+  if (gameState === 'idle' || gameState === 'gameover') {
+    start();
+    return;
+  }
   if (dog.onGround && gameState === 'playing') {
     dog.vy = JUMP_V;
     dog.onGround = false;
@@ -300,26 +267,26 @@ function jump() {
 }
 
 function start() {
-  gameState  = 'playing';
-  score      = 0;
-  dog        = { y: GROUND, vy: 0, onGround: true, legPhase: 0 };
-  items      = [];
-  frame      = 0;
-  animFrame  = 0;
-  particles  = [];
+  gameState = 'playing';
+  score = 0;
+  dog = { y: GROUND, vy: 0, onGround: true, legPhase: 0 };
+  items = [];
+  frame = 0;
+  animFrame = 0;
+  particles = [];
 }
 
 function drawScore() {
-  ctx.font      = `${14 * scale}px Georgia, serif`;
+  ctx.font = `${14 * scale}px Georgia, serif`;
   ctx.fillStyle = '#888';
   ctx.textAlign = 'left';
   ctx.fillText('score', 18 * scale, 24 * scale);
-  ctx.font      = `bold ${22 * scale}px Georgia, serif`;
+  ctx.font = `bold ${22 * scale}px Georgia, serif`;
   ctx.fillStyle = '#333';
   ctx.fillText(score, 18 * scale, 46 * scale);
 
   if (hiScore > 0) {
-    ctx.font      = `${12 * scale}px Georgia, serif`;
+    ctx.font = `${12 * scale}px Georgia, serif`;
     ctx.fillStyle = '#bbb';
     ctx.textAlign = 'right';
     ctx.fillText('best  ' + hiScore, (BASE_W - 18) * scale, 24 * scale);
@@ -327,13 +294,34 @@ function drawScore() {
 }
 
 function drawIdleScreen() {
-  ctx.font      = `bold ${20 * scale}px Georgia, serif`;
+  ctx.font = `bold ${20 * scale}px Georgia, serif`;
   ctx.fillStyle = '#555';
   ctx.textAlign = 'center';
   ctx.fillText('tap or press space to start', BASE_W / 2 * scale, 90 * scale);
-  ctx.font      = `${13 * scale}px Georgia, serif`;
+
+  ctx.font = `${13 * scale}px Georgia, serif`;
   ctx.fillStyle = '#aaa';
   ctx.fillText('collect flowers  ·  avoid puddles', BASE_W / 2 * scale, 112 * scale);
+}
+
+function drawGameOver() {
+  ctx.fillStyle = 'rgba(255,255,255,0.82)';
+  const bw = 200 * scale, bh = 72 * scale;
+  const bx = (BASE_W / 2 - 100) * scale, by = 70 * scale;
+  roundRect(ctx, bx, by, bw, bh, 12 * scale);
+  ctx.fill();
+  ctx.strokeStyle = '#ddd';
+  ctx.lineWidth = 1.5 * scale;
+  roundRect(ctx, bx, by, bw, bh, 12 * scale);
+  ctx.stroke();
+
+  ctx.font = `bold ${16 * scale}px Georgia, serif`;
+  ctx.fillStyle = '#444';
+  ctx.textAlign = 'center';
+  ctx.fillText('splashed!  score ' + score, BASE_W / 2 * scale, 100 * scale);
+  ctx.font = `${12 * scale}px Georgia, serif`;
+  ctx.fillStyle = '#aaa';
+  ctx.fillText('tap to try again', BASE_W / 2 * scale, 124 * scale);
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -350,43 +338,24 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function drawGameOver() {
-  ctx.fillStyle = 'rgba(255,255,255,0.82)';
-  const bw = 200 * scale, bh = 72 * scale;
-  const bx = (BASE_W / 2 - 100) * scale, by = 70 * scale;
-  roundRect(ctx, bx, by, bw, bh, 12 * scale);
-  ctx.fill();
-  ctx.strokeStyle = '#ddd';
-  ctx.lineWidth   = 1.5 * scale;
-  roundRect(ctx, bx, by, bw, bh, 12 * scale);
-  ctx.stroke();
-  ctx.font      = `bold ${16 * scale}px Georgia, serif`;
-  ctx.fillStyle = '#444';
-  ctx.textAlign = 'center';
-  ctx.fillText('splashed!  score ' + score, BASE_W / 2 * scale, 100 * scale);
-  ctx.font      = `${12 * scale}px Georgia, serif`;
-  ctx.fillStyle = '#aaa';
-  ctx.fillText('tap to try again', BASE_W / 2 * scale, 124 * scale);
-}
-
-// ── main loop ───────────────────────────────────────────────
 function loop() {
   requestAnimationFrame(loop);
   animFrame++;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
   ctx.fillStyle = '#fdfbf7';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   // clouds
-  for (const cl of clouds) {
-    cl.x -= gameState === 'playing' ? 0.3 : 0.15;
+  for (let cl of clouds) {
+    cl.x -= (gameState === 'playing' ? 0.3 : 0.15);
     if (cl.x < -80) cl.x = BASE_W + 80;
     drawCloud(cl.x, cl.y, cl.s);
   }
 
   // bg trees
-  for (const t of bgTrees) {
-    t.x -= gameState === 'playing' ? getSpeed() * 0.4 : 0;
+  for (let t of bgTrees) {
+    t.x -= (gameState === 'playing' ? getSpeed() * 0.4 : 0);
     if (t.x < -30) t.x = BASE_W + 30;
     drawTree(t.x, t.y);
   }
@@ -395,8 +364,10 @@ function loop() {
 
   if (gameState === 'playing') {
     frame++;
+    speed = getSpeed();
+
     dog.vy += GRAVITY;
-    dog.y  += dog.vy;
+    dog.y += dog.vy;
     if (dog.y >= GROUND) { dog.y = GROUND; dog.vy = 0; dog.onGround = true; }
     dog.legPhase += dog.onGround ? 0.22 : 0;
 
@@ -404,7 +375,7 @@ function loop() {
 
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i];
-      it.x -= getSpeed();
+      it.x -= speed;
 
       if (it.type === 'flower' && !it.collected) {
         drawFlower(it.x, it.y, animFrame);
@@ -422,18 +393,19 @@ function loop() {
           gameState = 'gameover';
         }
       }
+
       if (it.x < -60) items.splice(i, 1);
     }
 
     drawDog(DOG_X, dog.y, dog.legPhase, !dog.onGround);
     drawScore();
-
   } else if (gameState === 'idle') {
     const idleBob = Math.sin(animFrame * 0.04) * 2;
     drawDog(DOG_X, GROUND + idleBob, animFrame * 0.15, false);
     drawIdleScreen();
-    for (let i = 0; i < 3; i++) drawFlower(100 + i * 80, GROUND - 8, animFrame + i * 30);
-
+    for (let i = 0; i < 3; i++) {
+      drawFlower(100 + i * 80, GROUND - 8, animFrame + i * 30);
+    }
   } else if (gameState === 'gameover') {
     drawPuddle(DOG_X + 10, GROUND + 8);
     drawDog(DOG_X, GROUND, 0, false);
@@ -444,16 +416,15 @@ function loop() {
   // particles
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
-    p.x += p.vx * scale;
-    p.y += p.vy * scale;
+    p.x += p.vx * scale; p.y += p.vy * scale;
     p.vy += 0.15 * scale;
     p.life -= 0.04;
     if (p.life <= 0) { particles.splice(i, 1); continue; }
     ctx.save();
     ctx.globalAlpha = p.life;
-    ctx.fillStyle   = p.color;
+    ctx.fillStyle = p.color;
     ctx.strokeStyle = '#1a1a1a';
-    ctx.lineWidth   = 1 * scale;
+    ctx.lineWidth = 1 * scale;
     ctx.beginPath();
     ctx.arc(p.x, p.y, 3 * scale, 0, Math.PI * 2);
     ctx.fill(); ctx.stroke();
@@ -466,5 +437,3 @@ document.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventD
 
 loop();
 </script>
-</body>
-</html>
